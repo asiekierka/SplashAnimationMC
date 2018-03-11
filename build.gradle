@@ -1,0 +1,128 @@
+buildscript {
+    repositories {
+        jcenter()
+        maven { url = "http://files.minecraftforge.net/maven" }
+        maven {
+            url "https://plugins.gradle.org/m2/"
+        }
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:2.3-SNAPSHOT'
+        classpath 'com.github.jengelman.gradle.plugins:shadow:2.0.2'
+        classpath "gradle.plugin.net.minecrell:licenser:0.3"
+    }
+}
+
+apply plugin: 'net.minecraftforge.gradle.forge'
+apply plugin: 'com.github.johnrengelman.shadow'
+apply plugin: 'net.minecrell.licenser'
+
+version = "0.1.0"
+group = "pl.asie.splashanimation" // http://maven.apache.org/guides/mini/guide-naming-conventions.html
+archivesBaseName = "SplashAnimation"
+
+sourceCompatibility = targetCompatibility = '1.8' // Need this here so eclipse task generates correctly.
+compileJava {
+    sourceCompatibility = targetCompatibility = '1.8'
+}
+
+minecraft {
+    version = "1.12.2-14.23.2.2624"
+    runDir = "run"
+    
+    mappings = "snapshot_20180310"
+
+    replace '@VERSION@', project.version
+    replace '@MC_VERSION@', version
+}
+
+sourceSets {
+    main {
+        resources {
+            srcDirs += 'docs'
+        }
+    }
+}
+
+license {
+    sourceSets = [project.sourceSets.main]
+    header = project.file("docs/licenses/LICENSE")
+    ignoreFailures = true
+    exclude '**/*.lang'
+    exclude '**/*.info'
+    exclude '**/*.mcmeta'
+}
+
+repositories {
+    maven {
+        url = 'https://repo.elytradev.com'
+    }
+    ivy {
+        name 'asie dependency mirror'
+        artifactPattern "http://asie.pl/javadeps/[module]-[revision](-[classifier]).[ext]"
+    }
+}
+
+jar {
+	classifier = 'slim'
+	manifest.attributes "Manifest-Version": "1.0"
+	manifest.attributes "FMLCorePlugin": "pl.asie.splashanimation.core.SplashAnimationCoremod"
+}
+
+
+shadowJar {
+	classifier = ''
+	relocate 'com.elytradev.mini', 'pl.asie.splashanimation.core.repackage.com.elytradev.mini'
+	configurations = [project.configurations.shadow]
+	manifest.attributes "Manifest-Version": "1.0"
+	manifest.attributes "FMLCorePlugin": "pl.asie.splashanimation.core.SplashAnimationCoremod"
+}
+
+processResources {
+    // this will ensure that this task is redone when the versions change.
+    inputs.property "version", project.version
+    inputs.property "mcversion", project.minecraft.version
+
+    // replace stuff in mcmod.info, nothing else
+    from(sourceSets.main.resources.srcDirs) {
+        include 'mcmod.info'
+                
+        // replace version and mcversion
+        expand 'version':project.version, 'mcversion':project.minecraft.version
+    }
+        
+    // copy everything else except the mcmod.info
+    from(sourceSets.main.resources.srcDirs) {
+        exclude 'mcmod.info'
+    }
+}
+
+reobf {
+	shadowJar { mappingType = 'SEARGE' }
+}
+
+tasks.build.dependsOn reobfShadowJar
+
+artifacts {
+	archives shadowJar
+}
+
+dependencies {
+	compile 'com.elytradev:mini:0.2-SNAPSHOT'
+	shadow 'com.elytradev:mini:0.2-SNAPSHOT'
+}
+
+task signShadowJar(type: SignJar, dependsOn: shadowJar) {
+    onlyIf {
+        project.hasProperty('keyStore')
+    }
+
+    keyStore = project.keyStore
+    alias = project.keyStoreAlias
+    storePass = project.keyStorePass
+    keyPass = project.keyStoreKeyPass
+    inputFile = shadowJar.archivePath
+    outputFile = shadowJar.archivePath
+}
+
+build.dependsOn(signShadowJar)
