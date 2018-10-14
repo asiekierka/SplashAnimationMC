@@ -1,2 +1,4 @@
 * Added options for scaling the animated image up/down to fill the display.
+* Added frameFileDirectory to specify the name of the directory containing the animation frames.
+* Moved frame loading to a separate thread with a buffer, lowering the memory usage of the animation and minimizing the chance of stutter.
 * Removed frameFileFormat; now, the numbering in the animation folder can be arbitrary (1.png, 0002.png, 03.png will create a functioning animation)

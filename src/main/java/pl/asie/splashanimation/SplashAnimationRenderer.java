@@ -27,19 +27,79 @@ import org.lwjgl.opengl.Display;
 import org.lwjgl.opengl.GL11;
 
 import javax.imageio.ImageIO;
+import javax.swing.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.nio.IntBuffer;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
+import java.util.*;
 
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL12.GL_BGRA;
 import static org.lwjgl.opengl.GL12.GL_UNSIGNED_INT_8_8_8_8_REV;
 
 public class SplashAnimationRenderer {
+	public static class ImageProvider implements Runnable {
+		private final LinkedList<File> fileList = new LinkedList<>();
+		private final LinkedList<BufferedImage> imageList = new LinkedList<>();
+		private final int bufferSize;
+		private int lastImage = 0;
+		private boolean run = true;
+
+		public ImageProvider(Collection<File> files) {
+			fileList.addAll(files);
+			// ~1 second
+			bufferSize = Math.max(5, (int) Math.ceil(1 / frameDelay));
+		}
+
+		public BufferedImage getImage(int pos) {
+			while (lastImage < pos) {
+				if (imageList.size() == 1) {
+					return imageList.peekFirst();
+				} else if (imageList.isEmpty()) {
+					return new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+				}
+
+				imageList.remove();
+				lastImage++;
+			}
+
+			if (imageList.isEmpty()) {
+				return new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+			}
+
+			return imageList.peekFirst();
+		}
+
+		@Override
+		public void run() {
+			while (run) {
+				try {
+					while (imageList.size() < bufferSize && !fileList.isEmpty()) {
+						File f = fileList.remove();
+
+						try {
+							BufferedImage img = ImageIO.read(f);
+
+							synchronized (imageList) {
+								imageList.add(img);
+							}
+						} catch (Exception e) {
+							e.printStackTrace();
+						}
+					}
+
+					Thread.sleep(Math.round(frameDelay * 1000));
+				} catch (InterruptedException e) {
+
+				}
+			}
+		}
+
+		public void stop() {
+			this.run = false;
+		}
+	}
+
 	private static boolean animationSolid = false;
 	private static boolean animationScaleUp = false;
 	private static boolean animationScaleDown = false;
@@ -48,10 +108,15 @@ public class SplashAnimationRenderer {
 	private static float frameDelay = 0;
 	private static float fadeOutTime = 0;
 	private static long startTime = 0;
-	private static List<BufferedImage> images = new ArrayList<>();
 	private static int animTexture;
 	private static int animTexWidth, animTexHeight;
 	private static int stage = 0;
+	private static int width = -1;
+	private static int height = -1;
+
+	private static ImageProvider provider;
+	private static Thread providerThread;
+	private static int frameCount;
 
 	public static void run() {
 		switch (stage) {
@@ -107,29 +172,32 @@ public class SplashAnimationRenderer {
 			}
 		}
 
+		List<File> imageFiles = new ArrayList<>();
+
 		for (Map.Entry<Integer, File> entry : files.entrySet()) {
+			imageFiles.add(entry.getValue());
 			try {
 				BufferedImage image = ImageIO.read(entry.getValue());
-				images.add(image);
-				if (images.size() > 1) {
-					if ((images.get(0).getWidth() != image.getWidth())
-							|| (images.get(0).getHeight() != image.getHeight())) {
-						throw new RuntimeException("Mismatched animation frame sizes: " + image.getWidth() + "x" + image.getHeight() + " != " + images.get(0).getWidth() + "x" + images.get(0).getHeight());
-					}
-				}
+				width = image.getWidth();
+				height = image.getHeight();
 			} catch (Exception e) {
-				break;
+				throw new RuntimeException(e);
 			}
 		}
 
-		if (images.isEmpty()) {
+		if (imageFiles.isEmpty() || width < 0 || height < 0) {
 			System.err.println("Found no images!");
 			stage = 2;
 			return;
 		}
 
-		animTexWidth = MathHelper.smallestEncompassingPowerOfTwo(images.get(0).getWidth());
-		animTexHeight = MathHelper.smallestEncompassingPowerOfTwo(images.get(0).getHeight());
+		frameCount = imageFiles.size();
+		provider = new ImageProvider(imageFiles);
+		providerThread = new Thread(provider);
+		providerThread.start();
+
+		animTexWidth = MathHelper.smallestEncompassingPowerOfTwo(width);
+		animTexHeight = MathHelper.smallestEncompassingPowerOfTwo(height);
 
 		int maxSize = SplashProgress.getMaxTextureSize();
 		if (animTexWidth > maxSize || animTexHeight > maxSize) {
@@ -160,8 +228,8 @@ public class SplashAnimationRenderer {
 		GL11.glEnable(GL11.GL_TEXTURE_2D);
 		GL11.glBindTexture(GL11.GL_TEXTURE_2D, animTexture);
 
-		if (i != uploadedFrame && (i >= 0 && i < images.size())) {
-			BufferedImage img = images.get(i);
+		if (i != uploadedFrame) {
+			BufferedImage img = provider.getImage(i);
 
 			int[] t = img.getRGB(0, 0, img.getWidth(), img.getHeight(), null, 0, img.getWidth());
 			IntBuffer buf = BufferUtils.createIntBuffer(t.length);
@@ -192,7 +260,7 @@ public class SplashAnimationRenderer {
 	}
 
 	private static void render() {
-		int finalElapsedMs = (int) (images.size() * (frameDelay * 1000));
+		int finalElapsedMs = (int) (frameCount * (frameDelay * 1000));
 
 		int elapsedMs = (int) (System.currentTimeMillis() - startTime);
 		int i = (int) ((elapsedMs / 1000.0f) / frameDelay);
@@ -208,8 +276,8 @@ public class SplashAnimationRenderer {
 
 		float w = Display.getWidth();
 		float h = Display.getHeight();
-		float iw = images.get(0).getWidth();
-		float ih = images.get(0).getHeight();
+		float iw = width;
+		float ih = height;
 
 		GL11.glViewport(0, 0, (int) w, (int) h);
 		GL11.glMatrixMode(GL11.GL_PROJECTION);
@@ -282,7 +350,11 @@ public class SplashAnimationRenderer {
 	public static void finish() {
 		if (stage <= 2) {
 			GL11.glDeleteTextures(animTexture);
-			images.clear();
+			if (provider != null) {
+				provider.stop();
+			}
+			provider = null;
+			providerThread = null;
 			stage = 3;
 		}
 	}
