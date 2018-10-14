@@ -1,0 +1,2 @@
+* Added options for scaling the animated image up/down to fill the display.
+* Removed frameFileFormat; now, the numbering in the animation folder can be arbitrary (1.png, 0002.png, 03.png will create a functioning animation)

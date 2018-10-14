@@ -32,6 +32,8 @@ import java.io.File;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 import static org.lwjgl.opengl.GL11.*;
 import static org.lwjgl.opengl.GL12.GL_BGRA;
@@ -39,6 +41,9 @@ import static org.lwjgl.opengl.GL12.GL_UNSIGNED_INT_8_8_8_8_REV;
 
 public class SplashAnimationRenderer {
 	private static boolean animationSolid = false;
+	private static boolean animationScaleUp = false;
+	private static boolean animationScaleDown = false;
+	private static boolean animationScaleFilter = false;
 	private static int backgroundColor = 0;
 	private static float frameDelay = 0;
 	private static float fadeOutTime = 0;
@@ -71,34 +76,50 @@ public class SplashAnimationRenderer {
 		File confDir = new File("config");
 		Configuration config = new Configuration(new File(confDir, "splashanimation.cfg"));
 		animationSolid = config.getBoolean("areFramesSolid", "animation", true, "Are the animation frames solid?");
+		animationScaleUp = config.getBoolean("enableScalingUp", "animation", false, "Should the animation scale up to fill the screen?");
+		animationScaleDown = config.getBoolean("enableScalingDown", "animation", true, "Should the animation scale down to fill the screen?");
+		animationScaleFilter = config.getBoolean("enableScalingFilter", "animation", true, "Should the animation, if scaled, use a bilinear filter?");
+
 		backgroundColor = Integer.parseInt(config.getString("backgroundColor", "animation", "000000", "The background color used during the animation."), 16);
 		frameDelay = config.getFloat("frameDelay", "animation", 0.03f, 0.005f, 1.0f, "The delay for each frame of animation, in seconds.");
 		fadeOutTime = config.getFloat("fadeOutTime", "animation", 1.0f, 0.0f, 5.0f, "The fade out time after the final frame of animation.");
-		String frameStr = config.getString("frameFileFormat", "animation", "%03d.png", "The filename template for each frame of animation, starting from 0.");
+		String frameStr = config.getString("frameFileDirectory", "animation", "animation", "The directory containing the animation frames, which should be of the filename format [number].[extension].");
 
 		if (config.hasChanged()) {
 			config.save();
 		}
 
-		boolean addImages = true;
-		File imgDir = new File("animation");
-		int i = 0;
-		while (addImages) {
-			File imgFile = new File(imgDir, String.format(frameStr, i));
+		File imgDir = new File(frameStr);
+
+		TreeMap<Integer, File> files = new TreeMap<>();
+
+		if (imgDir.exists() && imgDir.isDirectory()) {
+			for (File imgFile : imgDir.listFiles()) {
+				String s = imgFile.getName().split("\\.")[0];
+				try {
+					Integer i = Integer.valueOf(s);
+					if (i >= 0) {
+						files.put(i, imgFile);
+					}
+				} catch (NumberFormatException e) {
+					// pass
+				}
+			}
+		}
+
+		for (Map.Entry<Integer, File> entry : files.entrySet()) {
 			try {
-				// System.out.println(imgFile.getAbsolutePath());
-				BufferedImage image = ImageIO.read(imgFile);
+				BufferedImage image = ImageIO.read(entry.getValue());
 				images.add(image);
 				if (images.size() > 1) {
 					if ((images.get(0).getWidth() != image.getWidth())
-						|| (images.get(0).getHeight() != image.getHeight())) {
-						throw new RuntimeException("Mismatched animation frame sizes: 0 =/= " + i);
+							|| (images.get(0).getHeight() != image.getHeight())) {
+						throw new RuntimeException("Mismatched animation frame sizes: " + image.getWidth() + "x" + image.getHeight() + " != " + images.get(0).getWidth() + "x" + images.get(0).getHeight());
 					}
 				}
 			} catch (Exception e) {
 				break;
 			}
-			i++;
 		}
 
 		if (images.isEmpty()) {
@@ -120,8 +141,13 @@ public class SplashAnimationRenderer {
 		GL11.glEnable(GL11.GL_TEXTURE_2D);
 		animTexture = GL11.glGenTextures();
 		GL11.glBindTexture(GL11.GL_TEXTURE_2D, animTexture);
-		GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
-		GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+		if (animationScaleFilter) {
+			GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
+			GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+		} else {
+			GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
+			GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
+		}
 		GL11.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, animTexWidth, animTexHeight, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, (IntBuffer)null);
 		GL11.glDisable(GL11.GL_TEXTURE_2D);
 
@@ -180,46 +206,60 @@ public class SplashAnimationRenderer {
 			}
 		}
 
-		int w = Display.getWidth();
-		int h = Display.getHeight();
-		int iw = images.get(0).getWidth();
-		int ih = images.get(0).getHeight();
+		float w = Display.getWidth();
+		float h = Display.getHeight();
+		float iw = images.get(0).getWidth();
+		float ih = images.get(0).getHeight();
 
-		GL11.glViewport(0, 0, w, h);
+		GL11.glViewport(0, 0, (int) w, (int) h);
 		GL11.glMatrixMode(GL11.GL_PROJECTION);
 		GL11.glLoadIdentity();
-		GL11.glOrtho(-w/2, w/2, h/2, -h/2, -1, 1);
+		GL11.glOrtho(-w/2f, w/2f, h/2f, -h/2f, -1, 1);
 		GL11.glMatrixMode(GL11.GL_MODELVIEW);
 		GL11.glLoadIdentity();
 
-		float maxU = (float) iw / animTexWidth;
-		float maxV = (float) ih / animTexHeight;
+		float maxU = iw / animTexWidth;
+		float maxV = ih / animTexHeight;
+
+		// scale iw/ih to w/h
+		float imgRatio = iw / ih;
+		float dispRatio = w / h;
+
+		float scalingFactor = (dispRatio > imgRatio) ? (h / ih) : (w / iw);
+
+		if ((animationScaleUp && scalingFactor > 1.0f) || (animationScaleDown && scalingFactor < 1.0f)) {
+			iw *= scalingFactor;
+			ih *= scalingFactor;
+		}
 
 		GL11.glDisable(GL11.GL_TEXTURE_2D);
 		glColor(backgroundColor, alpha);
 		GL11.glBegin(GL11.GL_QUADS);
-		if (animationSolid) {
-			GL11.glVertex2f(-w / 2, -h / 2);
-			GL11.glVertex2f(-w / 2, -ih / 2);
-			GL11.glVertex2f(w / 2, -ih / 2);
-			GL11.glVertex2f(w / 2, -h / 2);
-			GL11.glVertex2f(-w / 2, ih / 2);
-			GL11.glVertex2f(-w / 2, h / 2);
-			GL11.glVertex2f(w / 2, h / 2);
-			GL11.glVertex2f(w / 2, ih / 2);
-			GL11.glVertex2f(-w / 2, -ih / 2);
-			GL11.glVertex2f(-w / 2, ih / 2);
-			GL11.glVertex2f(-iw / 2, ih / 2);
-			GL11.glVertex2f(-iw / 2, -ih / 2);
-			GL11.glVertex2f(iw / 2, -ih / 2);
-			GL11.glVertex2f(iw / 2, ih / 2);
-			GL11.glVertex2f(w / 2, ih / 2);
-			GL11.glVertex2f(w / 2, -ih / 2);
+		if (animationSolid && alpha < 1.0f) {
+			GL11.glVertex2f(-w / 2f, -h / 2f);
+			GL11.glVertex2f(-w / 2f, -ih / 2f);
+			GL11.glVertex2f(w / 2f, -ih / 2f);
+			GL11.glVertex2f(w / 2f, -h / 2f);
+
+			GL11.glVertex2f(-w / 2f, ih / 2f);
+			GL11.glVertex2f(-w / 2f, h / 2f);
+			GL11.glVertex2f(w / 2f, h / 2f);
+			GL11.glVertex2f(w / 2f, ih / 2f);
+
+			GL11.glVertex2f(-w / 2f, -ih / 2f);
+			GL11.glVertex2f(-w / 2f, ih / 2f);
+			GL11.glVertex2f(-iw / 2f, ih / 2f);
+			GL11.glVertex2f(-iw / 2f, -ih / 2f);
+
+			GL11.glVertex2f(iw / 2f, -ih / 2f);
+			GL11.glVertex2f(iw / 2f, ih / 2f);
+			GL11.glVertex2f(w / 2f, ih / 2f);
+			GL11.glVertex2f(w / 2f, -ih / 2f);
 		} else {
-			GL11.glVertex2f(-w / 2, -h / 2);
-			GL11.glVertex2f(-w / 2, h / 2);
-			GL11.glVertex2f(w / 2, h / 2);
-			GL11.glVertex2f(w / 2, -h / 2);
+			GL11.glVertex2f(-w / 2f, -h / 2f);
+			GL11.glVertex2f(-w / 2f, h / 2f);
+			GL11.glVertex2f(w / 2f, h / 2f);
+			GL11.glVertex2f(w / 2f, -h / 2f);
 		}
 		GL11.glEnd();
 
@@ -228,13 +268,13 @@ public class SplashAnimationRenderer {
 		GL11.glColor4f(1, 1, 1, alpha);
 		GL11.glBegin(GL11.GL_QUADS);
 		GL11.glTexCoord2f(0, 0);
-		GL11.glVertex2f(-iw/2, -ih/2);
+		GL11.glVertex2f(-iw/2f, -ih/2f);
 		GL11.glTexCoord2f(0, maxV);
-		GL11.glVertex2f(-iw/2, ih/2);
+		GL11.glVertex2f(-iw/2f, ih/2f);
 		GL11.glTexCoord2f(maxU, maxV);
-		GL11.glVertex2f(iw/2, ih/2);
+		GL11.glVertex2f(iw/2f, ih/2f);
 		GL11.glTexCoord2f(maxU, 0);
-		GL11.glVertex2f(iw/2, -ih/2);
+		GL11.glVertex2f(iw/2f, -ih/2f);
 		GL11.glEnd();
 		GL11.glDisable(GL11.GL_TEXTURE_2D);
 	}
